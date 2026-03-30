@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Upload, FileText, X, Download, AlertCircle, Package, CheckCircle2, Search, Plus } from 'lucide-react';
 import { StockItem } from '../types';
 import { parsePdfFile } from '../utils/pdf';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 
 interface OrderPdfProcessorProps {
   stock: StockItem[];
@@ -28,7 +28,7 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
 
     const found: StockItem[] = [];
     const missing: string[] = [];
-    const groupedByContainer: Record<string, StockItem[]> = {};
+    const targetContainerIds = new Set<string>();
 
     extractedIds.forEach(id => {
       const cleanSearchId = id.trim().toLowerCase().replace(/^0+/, ''); // Remove leading zeros for comparison
@@ -67,16 +67,15 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
 
       if (item) {
         found.push(item);
-        if (!groupedByContainer[item.containerId]) {
-          groupedByContainer[item.containerId] = [];
-        }
-        // Avoid duplicates in the same container if multiple IDs match the same stock item
-        if (!groupedByContainer[item.containerId].some(existing => existing.id === item.id)) {
-          groupedByContainer[item.containerId].push(item);
-        }
+        targetContainerIds.add(item.containerId);
       } else {
         missing.push(id);
       }
+    });
+
+    const groupedByContainer: Record<string, StockItem[]> = {};
+    targetContainerIds.forEach(containerId => {
+      groupedByContainer[containerId] = stock.filter(s => s.containerId === containerId);
     });
 
     setResults({ found, missing, groupedByContainer });
@@ -124,43 +123,98 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
   const handleExportExcel = () => {
     if (!results) return;
 
-    const aoaData: any[][] = [];
+    const ws = XLSX.utils.aoa_to_sheet([]);
     
-    // Title
-    aoaData.push(['PLANILLA DE CARGA', '', '', '', '', '']);
-    aoaData.push([]);
+    // Define styles
+    const titleStyle = {
+      font: { bold: true, sz: 14 },
+      alignment: { horizontal: "center", vertical: "center" }
+    };
     
-    // Headers
-    aoaData.push(['Contenedor', 'Cant.', 'Bultos', 'Peso', 'Descripción', 'Pallet ID']);
+    const headerStyle = {
+      font: { bold: true },
+      fill: { fgColor: { rgb: "E0E0E0" } },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } }
+      },
+      alignment: { horizontal: "center", vertical: "center" }
+    };
+
+    const dataStyle = {
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } }
+      }
+    };
+
+    const highlightStyle = {
+      ...dataStyle,
+      fill: { fgColor: { rgb: "FFFF00" } }
+    };
+
+    // Row 1: Title
+    XLSX.utils.sheet_add_aoa(ws, [['PLANILLA DE CARGA']], { origin: 'A1' });
+    ws['A1'].s = titleStyle;
+    if (!ws['!merges']) ws['!merges'] = [];
+    ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } });
+
+    // Row 3: Headers
+    const headers = ['Contenedor', 'Cant.', 'Bultos', 'Peso', 'Descripción', 'Pallet ID'];
+    XLSX.utils.sheet_add_aoa(ws, [headers], { origin: 'A3' });
     
-    // Sort containers alphabetically
+    // Apply header styles
+    for (let C = 0; C < 6; C++) {
+      const cellRef = XLSX.utils.encode_cell({ r: 2, c: C });
+      if (ws[cellRef]) ws[cellRef].s = headerStyle;
+    }
+
+    let currentRow = 3; // 0-indexed, so row 4 is index 3
+
     const sortedContainers = Object.keys(results.groupedByContainer).sort();
     
     sortedContainers.forEach((containerId, index) => {
       const items = results.groupedByContainer[containerId];
+      
       items.forEach(item => {
-        aoaData.push([
+        const isHighlighted = results.found.some(f => f.id === item.id);
+        
+        const rowData = [
           containerId,
-          1, // Cant.
+          1,
           item.boxes,
           item.weight,
           item.product,
           item.lot || item.palletId
-        ]);
+        ];
+        
+        XLSX.utils.sheet_add_aoa(ws, [rowData], { origin: `A${currentRow + 1}` });
+        
+        // Apply data styles
+        for (let C = 0; C < 6; C++) {
+          const cellRef = XLSX.utils.encode_cell({ r: currentRow, c: C });
+          if (ws[cellRef]) {
+            if (C === 5 && isHighlighted) {
+              ws[cellRef].s = highlightStyle;
+            } else {
+              ws[cellRef].s = dataStyle;
+            }
+          }
+        }
+        
+        currentRow++;
       });
       
-      // Add empty row after each container group
+      // Add empty row
       if (index < sortedContainers.length - 1) {
-        aoaData.push([]);
+        currentRow++;
       }
     });
 
-    const ws = XLSX.utils.aoa_to_sheet(aoaData);
-    
-    // Merge title cells (Row 0, Col 0 to Col 5)
-    if (!ws['!merges']) ws['!merges'] = [];
-    ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } });
-    
     // Column widths
     ws['!cols'] = [
       { wch: 18 }, // Contenedor
@@ -365,14 +419,23 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
                             </tr>
                           </thead>
                           <tbody>
-                            {items.map((item, idx) => (
-                              <tr key={idx} className="border-b border-slate-100 dark:border-slate-800 last:border-0">
-                                <td className="px-4 py-3 font-mono font-medium text-slate-900 dark:text-white">{item.lot || item.palletId}</td>
-                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.product}</td>
-                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-300">{item.boxes}</td>
-                                <td className="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">{item.weight.toLocaleString()}</td>
-                              </tr>
-                            ))}
+                            {items.map((item, idx) => {
+                              const isHighlighted = results.found.some(f => f.id === item.id);
+                              return (
+                                <tr key={idx} className={`border-b border-slate-100 dark:border-slate-800 last:border-0 ${isHighlighted ? 'bg-yellow-50 dark:bg-yellow-900/20' : ''}`}>
+                                  <td className="px-4 py-3 font-mono font-medium text-slate-900 dark:text-white">
+                                    {isHighlighted ? (
+                                      <span className="bg-yellow-200 dark:bg-yellow-600/50 px-2 py-1 rounded text-yellow-900 dark:text-yellow-100">{item.lot || item.palletId}</span>
+                                    ) : (
+                                      item.lot || item.palletId
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.product}</td>
+                                  <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-300">{item.boxes}</td>
+                                  <td className="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">{item.weight.toLocaleString()}</td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
