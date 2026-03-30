@@ -1,0 +1,5 @@
+{
+  "name": "Remix: Gestor de Carga de Pallets",
+  "description": "Herramienta para procesar planillas Excel, buscar pallets y generar planes de carga por contenedor.",
+  "requestFramePermissions": []
+}
