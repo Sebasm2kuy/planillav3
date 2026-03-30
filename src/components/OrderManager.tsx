@@ -14,8 +14,10 @@ import {
   ChevronRight,
   Calendar,
   User,
-  Info
+  Info,
+  FileText
 } from 'lucide-react';
+import { OrderPdfProcessor } from './OrderPdfProcessor';
 
 interface OrderManagerProps {
   orders: Order[];
@@ -26,6 +28,7 @@ interface OrderManagerProps {
 
 export const OrderManager: React.FC<OrderManagerProps> = ({ orders, clients, stock, onUpdateOrders }) => {
   const [showNewOrderForm, setShowNewOrderForm] = useState(false);
+  const [showPdfProcessor, setShowPdfProcessor] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClientFilter, setSelectedClientFilter] = useState<string>('all');
   
@@ -133,13 +136,22 @@ export const OrderManager: React.FC<OrderManagerProps> = ({ orders, clients, sto
           </h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm">Registra y valida pedidos contra el stock de cámara.</p>
         </div>
-        <button
-          onClick={() => setShowNewOrderForm(true)}
-          className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl hover:bg-indigo-700 transition-all font-bold shadow-lg shadow-indigo-200 dark:shadow-none"
-        >
-          <Plus className="w-5 h-5" />
-          Nuevo Pedido
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowPdfProcessor(true)}
+            className="flex items-center gap-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 px-6 py-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all font-bold shadow-sm"
+          >
+            <FileText className="w-5 h-5" />
+            Procesar Orden PDF
+          </button>
+          <button
+            onClick={() => setShowNewOrderForm(true)}
+            className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl hover:bg-indigo-700 transition-all font-bold shadow-lg shadow-indigo-200 dark:shadow-none"
+          >
+            <Plus className="w-5 h-5" />
+            Nuevo Pedido
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -392,6 +404,16 @@ export const OrderManager: React.FC<OrderManagerProps> = ({ orders, clients, sto
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* PDF Processor Modal */}
+      <AnimatePresence>
+        {showPdfProcessor && (
+          <OrderPdfProcessor
+            stock={stock}
+            onClose={() => setShowPdfProcessor(false)}
+          />
         )}
       </AnimatePresence>
     </div>
