@@ -88,23 +88,33 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
 
     setIsProcessing(true);
     try {
-      let extractedIds: string[] = [];
-      if (file.name.endsWith('.pdf')) {
-        extractedIds = await parsePdfFile(file);
-      } else {
-        alert('Por favor, sube un archivo PDF.');
+      let allExtractedIds: string[] = [];
+      
+      for (const file of files) {
+        if (file.name.toLowerCase().endsWith('.pdf')) {
+          const ids = await parsePdfFile(file);
+          allExtractedIds = [...allExtractedIds, ...ids];
+        } else {
+          console.warn(`Archivo ignorado (no es PDF): ${file.name}`);
+        }
+      }
+
+      if (allExtractedIds.length === 0) {
+        alert('No se encontraron IDs válidos en los archivos subidos.');
         return;
       }
 
-      processIds(extractedIds);
+      // Remove duplicates across multiple PDFs
+      const uniqueIds = Array.from(new Set(allExtractedIds));
+      processIds(uniqueIds);
     } catch (error) {
       console.error(error);
-      alert('Error al procesar el archivo PDF.');
+      alert('Error al procesar los archivos PDF.');
     } finally {
       setIsProcessing(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -114,23 +124,55 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
   const handleExportExcel = () => {
     if (!results) return;
 
-    // Prepare data for Excel
-    const excelData = results.found.map(item => ({
-      'Contenedor': item.containerId,
-      'Pallet': item.palletId,
-      'Producto': item.product,
-      'Lote': item.lot,
-      'Cajas': item.boxes,
-      'Kilos': item.weight,
-      'Estado': item.status
-    }));
+    const aoaData: any[][] = [];
+    
+    // Title
+    aoaData.push(['PLANILLA DE CARGA', '', '', '', '', '']);
+    aoaData.push([]);
+    
+    // Headers
+    aoaData.push(['Contenedor', 'Cant.', 'Bultos', 'Peso', 'Descripción', 'Pallet ID']);
+    
+    // Sort containers alphabetically
+    const sortedContainers = Object.keys(results.groupedByContainer).sort();
+    
+    sortedContainers.forEach((containerId, index) => {
+      const items = results.groupedByContainer[containerId];
+      items.forEach(item => {
+        aoaData.push([
+          containerId,
+          1, // Cant.
+          item.boxes,
+          item.weight,
+          item.product,
+          item.lot || item.palletId
+        ]);
+      });
+      
+      // Add empty row after each container group
+      if (index < sortedContainers.length - 1) {
+        aoaData.push([]);
+      }
+    });
 
-    // Sort by container
-    excelData.sort((a, b) => a.Contenedor.localeCompare(b.Contenedor));
+    const ws = XLSX.utils.aoa_to_sheet(aoaData);
+    
+    // Merge title cells (Row 0, Col 0 to Col 5)
+    if (!ws['!merges']) ws['!merges'] = [];
+    ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } });
+    
+    // Column widths
+    ws['!cols'] = [
+      { wch: 18 }, // Contenedor
+      { wch: 6 },  // Cant.
+      { wch: 8 },  // Bultos
+      { wch: 8 },  // Peso
+      { wch: 60 }, // Descripción
+      { wch: 15 }  // Pallet ID
+    ];
 
-    const ws = XLSX.utils.json_to_sheet(excelData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Pallets por Contenedor');
+    XLSX.utils.book_append_sheet(wb, ws, 'Planilla de Carga');
 
     // Add missing pallets sheet if any
     if (results.missing.length > 0) {
@@ -139,7 +181,7 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
       XLSX.utils.book_append_sheet(wb, wsMissing, 'No Encontrados');
     }
 
-    XLSX.writeFile(wb, `Ubicacion_Pallets_${new Date().getTime()}.xlsx`);
+    XLSX.writeFile(wb, `Planilla_de_Carga_${new Date().getTime()}.xlsx`);
   };
 
   return (
@@ -204,9 +246,9 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
                 <div className="w-20 h-20 bg-indigo-50 dark:bg-indigo-900/20 rounded-full flex items-center justify-center mb-6">
                   <Upload className="w-10 h-10 text-indigo-600 dark:text-indigo-400" />
                 </div>
-                <h4 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Sube la Orden de Embarque</h4>
+                <h4 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Sube las Órdenes de Embarque</h4>
                 <p className="text-slate-500 dark:text-slate-400 text-center max-w-md mb-8">
-                  Sube el archivo PDF de la orden. El sistema extraerá los números de pallet y buscará en qué contenedores se encuentran actualmente en stock.
+                  Sube uno o múltiples archivos PDF. El sistema extraerá los números de pallet y buscará en qué contenedores se encuentran actualmente en stock.
                 </p>
                 
                 <input
@@ -214,6 +256,7 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
                   ref={fileInputRef}
                   className="hidden"
                   accept=".pdf"
+                  multiple
                   onChange={handleFileUpload}
                 />
                 <button
@@ -222,11 +265,11 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
                   className="bg-indigo-600 text-white px-8 py-4 rounded-xl hover:bg-indigo-700 transition-all font-bold shadow-lg shadow-indigo-200 dark:shadow-none flex items-center gap-3 text-lg disabled:opacity-50"
                 >
                   {isProcessing ? (
-                    <span className="animate-pulse">Procesando PDF...</span>
+                    <span className="animate-pulse">Procesando PDFs...</span>
                   ) : (
                     <>
                       <FileText className="w-6 h-6" />
-                      Seleccionar PDF
+                      Seleccionar PDFs
                     </>
                   )}
                 </button>
