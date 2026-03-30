@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Upload, FileText, X, Download, AlertCircle, Package, CheckCircle2 } from 'lucide-react';
+import { Upload, FileText, X, Download, AlertCircle, Package, CheckCircle2, Search, Plus } from 'lucide-react';
 import { StockItem } from '../types';
 import { parsePdfFile } from '../utils/pdf';
 import * as XLSX from 'xlsx';
@@ -12,12 +12,80 @@ interface OrderPdfProcessorProps {
 
 export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onClose }) => {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [manualInput, setManualInput] = useState('');
   const [results, setResults] = useState<{
     found: StockItem[];
     missing: string[];
     groupedByContainer: Record<string, StockItem[]>;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const processIds = (extractedIds: string[]) => {
+    if (extractedIds.length === 0) {
+      alert('No se encontraron números de pallet válidos.');
+      return;
+    }
+
+    const found: StockItem[] = [];
+    const missing: string[] = [];
+    const groupedByContainer: Record<string, StockItem[]> = {};
+
+    extractedIds.forEach(id => {
+      const cleanSearchId = id.trim().toLowerCase().replace(/^0+/, ''); // Remove leading zeros for comparison
+      const strippedSearchId = cleanSearchId.replace(/[^a-z0-9]/g, ''); // Remove all non-alphanumeric
+      
+      const item = stock.find(s => {
+        const sPallet = (s.palletId || '').trim().toLowerCase();
+        const sLot = (s.lot || '').trim().toLowerCase();
+        
+        // Exact match
+        if (sPallet === id.toLowerCase() || sLot === id.toLowerCase()) return true;
+        
+        // Match without leading zeros
+        const cleanPallet = sPallet.replace(/^0+/, '');
+        const cleanLot = sLot.replace(/^0+/, '');
+        if (cleanPallet === cleanSearchId || cleanLot === cleanSearchId) return true;
+        
+        // Partial match (e.g., if stock has "PAL-123456" and search is "123456")
+        if (sPallet.includes(cleanSearchId) || sLot.includes(cleanSearchId)) return true;
+
+        // Stripped match (e.g. "PAL-1234" vs "PAL1234")
+        const strippedPallet = sPallet.replace(/[^a-z0-9]/g, '');
+        const strippedLot = sLot.replace(/[^a-z0-9]/g, '');
+        
+        if (strippedSearchId.length >= 4) {
+          if (strippedPallet === strippedSearchId || strippedLot === strippedSearchId) return true;
+          if (strippedPallet.includes(strippedSearchId) || strippedLot.includes(strippedSearchId)) return true;
+          
+          // Reverse check: if user typed "PAL-123456" but stock is "123456"
+          if (strippedPallet.length >= 4 && strippedSearchId.includes(strippedPallet)) return true;
+          if (strippedLot.length >= 4 && strippedSearchId.includes(strippedLot)) return true;
+        }
+        
+        return false;
+      });
+
+      if (item) {
+        found.push(item);
+        if (!groupedByContainer[item.containerId]) {
+          groupedByContainer[item.containerId] = [];
+        }
+        // Avoid duplicates in the same container if multiple IDs match the same stock item
+        if (!groupedByContainer[item.containerId].some(existing => existing.id === item.id)) {
+          groupedByContainer[item.containerId].push(item);
+        }
+      } else {
+        missing.push(id);
+      }
+    });
+
+    setResults({ found, missing, groupedByContainer });
+  };
+
+  const handleManualSearch = () => {
+    const ids = manualInput.split(/[\s,\n]+/).map(id => id.trim()).filter(id => id.length > 0);
+    processIds(ids);
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -33,29 +101,7 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
         return;
       }
 
-      if (extractedIds.length === 0) {
-        alert('No se encontraron números de pallet válidos en el archivo.');
-        return;
-      }
-
-      const found: StockItem[] = [];
-      const missing: string[] = [];
-      const groupedByContainer: Record<string, StockItem[]> = {};
-
-      extractedIds.forEach(id => {
-        const item = stock.find(s => s.palletId === id);
-        if (item) {
-          found.push(item);
-          if (!groupedByContainer[item.containerId]) {
-            groupedByContainer[item.containerId] = [];
-          }
-          groupedByContainer[item.containerId].push(item);
-        } else {
-          missing.push(id);
-        }
-      });
-
-      setResults({ found, missing, groupedByContainer });
+      processIds(extractedIds);
     } catch (error) {
       console.error(error);
       alert('Error al procesar el archivo PDF.');
@@ -123,39 +169,79 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
 
         <div className="p-6 overflow-y-auto flex-1">
           {!results ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <div className="w-20 h-20 bg-indigo-50 dark:bg-indigo-900/20 rounded-full flex items-center justify-center mb-6">
-                <Upload className="w-10 h-10 text-indigo-600 dark:text-indigo-400" />
+            <div className="flex flex-col items-center justify-center py-8">
+              <div className="w-full max-w-2xl bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 mb-8">
+                <h4 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                  <Search className="w-5 h-5 text-indigo-500" />
+                  Búsqueda Manual
+                </h4>
+                <div className="flex gap-3">
+                  <textarea
+                    value={manualInput}
+                    onChange={(e) => setManualInput(e.target.value)}
+                    placeholder="Ingresa números de pallet separados por espacio o coma..."
+                    className="flex-1 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-900 transition-all font-mono text-sm min-h-[50px] max-h-32 resize-none"
+                    rows={2}
+                  />
+                  <button
+                    onClick={handleManualSearch}
+                    disabled={!manualInput.trim()}
+                    className="bg-indigo-600 text-white px-6 py-2 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-bold flex items-center gap-2"
+                  >
+                    <Search className="w-5 h-5" />
+                    Buscar
+                  </button>
+                </div>
               </div>
-              <h4 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Sube la Orden de Embarque</h4>
-              <p className="text-slate-500 dark:text-slate-400 text-center max-w-md mb-8">
-                Sube el archivo PDF de la orden. El sistema extraerá los números de pallet y buscará en qué contenedores se encuentran actualmente en stock.
-              </p>
-              
-              <input
-                type="file"
-                ref={fileInputRef}
-                className="hidden"
-                accept=".pdf"
-                onChange={handleFileUpload}
-              />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isProcessing}
-                className="bg-indigo-600 text-white px-8 py-4 rounded-xl hover:bg-indigo-700 transition-all font-bold shadow-lg shadow-indigo-200 dark:shadow-none flex items-center gap-3 text-lg disabled:opacity-50"
-              >
-                {isProcessing ? (
-                  <span className="animate-pulse">Procesando PDF...</span>
-                ) : (
-                  <>
-                    <FileText className="w-6 h-6" />
-                    Seleccionar PDF
-                  </>
-                )}
-              </button>
+
+              <div className="flex items-center gap-4 w-full max-w-2xl mb-8">
+                <div className="h-px bg-slate-200 dark:bg-slate-700 flex-1"></div>
+                <span className="text-slate-400 dark:text-slate-500 font-medium text-sm uppercase tracking-wider">O subir archivo</span>
+                <div className="h-px bg-slate-200 dark:bg-slate-700 flex-1"></div>
+              </div>
+
+              <div className="flex flex-col items-center">
+                <div className="w-20 h-20 bg-indigo-50 dark:bg-indigo-900/20 rounded-full flex items-center justify-center mb-6">
+                  <Upload className="w-10 h-10 text-indigo-600 dark:text-indigo-400" />
+                </div>
+                <h4 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Sube la Orden de Embarque</h4>
+                <p className="text-slate-500 dark:text-slate-400 text-center max-w-md mb-8">
+                  Sube el archivo PDF de la orden. El sistema extraerá los números de pallet y buscará en qué contenedores se encuentran actualmente en stock.
+                </p>
+                
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept=".pdf"
+                  onChange={handleFileUpload}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isProcessing}
+                  className="bg-indigo-600 text-white px-8 py-4 rounded-xl hover:bg-indigo-700 transition-all font-bold shadow-lg shadow-indigo-200 dark:shadow-none flex items-center gap-3 text-lg disabled:opacity-50"
+                >
+                  {isProcessing ? (
+                    <span className="animate-pulse">Procesando PDF...</span>
+                  ) : (
+                    <>
+                      <FileText className="w-6 h-6" />
+                      Seleccionar PDF
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-6">
+              <div className="flex justify-between items-center mb-4">
+                <button
+                  onClick={() => setResults(null)}
+                  className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 font-medium text-sm flex items-center gap-1"
+                >
+                  ← Volver a buscar
+                </button>
+              </div>
               {/* Summary Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-2xl border border-emerald-100 dark:border-emerald-800/30">
@@ -229,9 +315,8 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
                         <table className="w-full text-sm text-left">
                           <thead className="text-xs text-slate-500 dark:text-slate-400 uppercase bg-slate-50 dark:bg-slate-900/50">
                             <tr>
-                              <th className="px-4 py-2 rounded-l-lg">Pallet</th>
+                              <th className="px-4 py-2 rounded-l-lg">Lote / Pallet</th>
                               <th className="px-4 py-2">Producto</th>
-                              <th className="px-4 py-2">Lote</th>
                               <th className="px-4 py-2 text-right">Cajas</th>
                               <th className="px-4 py-2 text-right rounded-r-lg">Kilos</th>
                             </tr>
@@ -239,9 +324,8 @@ export const OrderPdfProcessor: React.FC<OrderPdfProcessorProps> = ({ stock, onC
                           <tbody>
                             {items.map((item, idx) => (
                               <tr key={idx} className="border-b border-slate-100 dark:border-slate-800 last:border-0">
-                                <td className="px-4 py-3 font-mono font-medium text-slate-900 dark:text-white">{item.palletId}</td>
+                                <td className="px-4 py-3 font-mono font-medium text-slate-900 dark:text-white">{item.lot || item.palletId}</td>
                                 <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.product}</td>
-                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.lot}</td>
                                 <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-300">{item.boxes}</td>
                                 <td className="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">{item.weight.toLocaleString()}</td>
                               </tr>

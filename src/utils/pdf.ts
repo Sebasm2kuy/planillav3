@@ -42,17 +42,16 @@ export const parsePdfFile = async (file: File): Promise<string[]> => {
       }
     }
 
-    // Extract potential pallet IDs (6-7 digit numbers)
+    // Extract potential pallet IDs (alphanumeric strings with at least 5 digits)
     const fullText = textContent.join(' ');
     
-    // Look for numbers that are exactly 6 or 7 digits long.
-    // We use a regex that ensures the number is not part of a longer sequence of digits
-    // (e.g., avoiding extracting 7 digits out of a 10-digit phone number).
+    // Look for words that contain at least 4 digits. This covers 4-12 digit numbers,
+    // as well as alphanumeric IDs like "PAL1234" or "0001234".
     const matches: string[] = [];
-    const regex = /(?:^|[^\d])(\d{6,7})(?=[^\d]|$)/g;
+    const regex = /\b[A-Za-z0-9]*\d{4,}[A-Za-z0-9]*\b/g;
     let match;
     while ((match = regex.exec(fullText)) !== null) {
-      matches.push(match[1]);
+      matches.push(match[0]);
     }
 
     const uniqueIds = matches.length > 0 ? Array.from(new Set(matches)) : [];
